@@ -36,11 +36,11 @@ brew install ports
 ### npm
 
 ```sh
-npm install -g @erdemylmaz/ports-cli
+npm install -g @erdemyilmaz/ports-cli
 # or
-pnpm add -g @erdemylmaz/ports-cli
+pnpm add -g @erdemyilmaz/ports-cli
 # or
-yarn global add @erdemylmaz/ports-cli
+yarn global add @erdemyilmaz/ports-cli
 ```
 
 The npm package is a thin wrapper that downloads the right prebuilt binary

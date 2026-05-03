@@ -7,7 +7,7 @@ const bin = path.join(__dirname, "ports");
 
 if (!fs.existsSync(bin)) {
   console.error(
-    "[ports-cli] binary missing. Re-run: npm install -g @erdemylmaz/ports-cli"
+    "[ports-cli] binary missing. Re-run: npm install -g @erdemyilmaz/ports-cli"
   );
   process.exit(1);
 }
