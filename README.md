@@ -12,20 +12,40 @@
 
 `ports` is a small, single-binary, zero-dependency Go CLI for macOS that
 shows what's actually listening on your laptop and **why** — with the
-project context, working directory, parent process, and uptime that `lsof`
-doesn't give you. Kill, pause, or resume processes by port number.
+project context, working directory, parent process, uptime, and caffeinate
+status that `lsof` doesn't give you. Kill, pause, resume, or keep processes
+awake by port number.
 
 ```
 $ ports
-PORT   PROTO  PID    COMMAND  PARENT          PATH                              HOST       AGE
-3000   TCP    15711  node     node            ~/code/web-app                    0.0.0.0    27m
-3030   TCP    12405  node     node            ~/code/api                        0.0.0.0    29m
-5432   TCP    23514  ssh      launchd         ~/code/infra                      127.0.0.1  10d5h
-6379   TCP    23514  ssh      launchd         ~/code/infra                      127.0.0.1  10d5h
-51606  TCP    91160  workerd  launchd         ~/code/edge-app                   127.0.0.1  9d2h
+PORT   PROTO  PID    COMMAND  PARENT          PATH                              CAFFEINATE  HOST       AGE
+3000   TCP    15711  node     node            ~/code/web-app                    on:82031    0.0.0.0    27m
+3030   TCP    12405  node     node            ~/code/api                        -           0.0.0.0    29m
+5432   TCP    23514  ssh      launchd         ~/code/infra                      -           127.0.0.1  10d5h
+6379   TCP    23514  ssh      launchd         ~/code/infra                      -           127.0.0.1  10d5h
+51606  TCP    91160  workerd  launchd         ~/code/edge-app                   -           127.0.0.1  9d2h
 
 5 listener(s)
 ```
+
+## Keep Claude Code, Codex, and local agents awake
+
+Long-running agent work often depends on a local port: a Vite preview, a
+browser automation bridge, an MCP/tool server, an API, a model proxy, or a
+dashboard. `ports` lets you attach macOS `caffeinate` to the process that
+owns that port:
+
+```sh
+ports caffeinate 3000                 # keep whatever owns :3000 awake
+ports --caffeinate 12345              # keep a PID awake directly
+ports caffeinate --dir ~/code/agent   # keep project listeners awake
+ports uncaffeinate 3000               # stop watcher, keep process running
+```
+
+`ports` then shows `CAFFEINATE on:<watcher-pid>` in the normal table, so you
+can see whether a Claude Code, Codex, or background-agent session is protected
+from idle sleep. For lid-closed runs, keep the Mac on power in a supported
+clamshell setup; macOS can still force sleep outside those conditions.
 
 ## Install
 
@@ -92,6 +112,7 @@ you're trying to answer different questions:
 - *How long has it been there?* (probably a leaked dev server)
 - *Did I start it, or did launchd?* (auto-restart at login, or a real session?)
 - *Can I just kill the thing on :3000 without looking up the pid first?*
+- *Can I keep this AI agent or dev server awake while the Mac idles?*
 - *Show me only my dev servers, not Spotify/Chrome/Figma.*
 
 `ports` answers those directly:
@@ -104,16 +125,23 @@ you're trying to answer different questions:
 - **Filtering by purpose** — by default GUI apps and system daemons are
   hidden. `ports --all` shows everything.
 - **Kill / pause / resume by port number**, no `lsof | awk` ritual.
+- **Caffeinate by port, pid, or project directory** so long-running local
+  agents, tunnels, and dev servers can keep running through idle sleep.
 
 ## What it isn't
 
-- **Not a daemon.** No background process, no LaunchAgent, no SQLite, no
-  `~/Library/...` data dir. Every invocation reads live state.
+- **Not a ports daemon.** No LaunchAgent, no SQLite, no `~/Library/...`
+  data dir. Every invocation reads live state. When you ask for
+  `ports caffeinate`, it starts a normal macOS `/usr/bin/caffeinate` watcher
+  for the target PID and that watcher exits automatically with the target.
 - **Not cross-platform.** macOS only — it shells out to `/usr/sbin/lsof` and
   `/bin/ps` with macOS-specific flags.
 - **Not a monitor.** No history, no notifications, no traffic metrics. If you
   want "when did port 3000 first appear two days ago," that needs persistent
   state — out of scope.
+- **Not a closed-lid hardware bypass.** `caffeinate` prevents idle sleep while
+  macOS allows it. Many Mac laptops still sleep when the lid is closed unless
+  they are on power in a supported clamshell setup.
 - **Not a privileged tool.** No setuid, no helper. Killing root-owned ports
   needs `sudo ports kill ...`.
 
@@ -127,6 +155,9 @@ ports kill <port|pid|--dir PATH> [...]        Send SIGTERM (graceful)
 ports force-kill <port|pid|--dir PATH> [...]  Send SIGKILL (immediate)
 ports pause <port|pid|--dir PATH> [...]       Freeze process (SIGSTOP)
 ports resume <port|pid|--dir PATH> [...]      Unfreeze process (SIGCONT)
+ports caffeinate <port|pid|--dir PATH> [...]  Keep Mac awake while process runs
+ports --caffeinate <port|pid>                 Shortcut for ports caffeinate
+ports uncaffeinate <port|pid|--dir PATH> [...] Stop awake watchers
 ports inspect <port>                          Full process detail + HTTP probe
 ports self-destroy                            Uninstall the binary
 ports version                                 Print version
@@ -151,12 +182,48 @@ ports version                                 Print version
 | `--reverse` / `-r` | Flip the current sort direction                          |
 | `--json`         | Machine-readable output                                    |
 
+### Keeping dev servers and AI agents awake
+
+`ports caffeinate` wraps macOS's built-in `caffeinate` command around the
+process that owns a port. It starts `/usr/bin/caffeinate -dimsu -w <pid>` in
+the background, returns immediately, and the watcher exits automatically when
+the target process exits.
+
+```sh
+ports caffeinate 3000                 # keep whatever owns :3000 awake
+ports --caffeinate 12345              # same shortcut, targeting a pid
+ports caffeinate --dir ~/code/agent   # keep every listener in a project awake
+ports uncaffeinate 3000               # stop the awake watcher, keep app running
+```
+
+This is useful for long-running local AI agents and coding sessions: Claude
+Code, Codex, background tool servers, local dashboards, Vite/Next.js previews,
+Docker tunnels, and project-specific API stacks. If the thing you care about
+listens on a port, pass the port. If it does not listen on a port, pass the
+PID directly.
+
+`ports` shows the current status in the `CAFFEINATE` column:
+
+```sh
+PORT  PROTO  PID    COMMAND  PARENT  PATH          CAFFEINATE  HOST       AGE
+3000  TCP    15711  node     zsh     ~/code/agent  on:82031    127.0.0.1  4h12m
+```
+
+The `on:<pid>` value is the background `caffeinate` watcher PID. JSON output
+also includes `caffeinated` and `caffeinate_pids`.
+
+Important macOS reality: this prevents idle sleep while macOS permits the
+assertion. A closed laptop lid can still force sleep unless the Mac is on
+power in a supported clamshell setup. Keep lid-closed agent runs on power and
+ventilated.
+
 ### Killing by directory
 
-`kill`, `force-kill`, `pause`, and `resume` all accept `--dir PATH` to target
-every listener whose working directory is at or under the given path. Useful
-for "shut down everything in this project" without listing pids by hand. When
-more than one process would be signaled (or when `--dir` is used at all),
+`kill`, `force-kill`, `pause`, `resume`, `caffeinate`, and `uncaffeinate` all
+accept `--dir PATH` to target every listener whose working directory is at or
+under the given path. Useful for "shut down everything in this project" or
+"keep this whole agent workspace awake" without listing pids by hand. When
+more than one process would be targeted (or when `--dir` is used at all),
 you'll be asked to confirm — pass `--yes` / `-y` to skip.
 
 ```sh
@@ -164,6 +231,8 @@ ports kill --dir ~/code/web-app          # SIGTERM everything in this project
 ports force-kill --dir ~/code/web-app -y # SIGKILL, no confirmation
 ports pause --dir ~/code/api             # freeze the API stack
 ports resume --dir ~/code/api            # unfreeze it
+ports caffeinate --dir ~/code/agent -y    # keep project listeners awake
+ports uncaffeinate --dir ~/code/agent -y  # release their awake watchers
 ```
 
 ### Examples
@@ -212,11 +281,17 @@ ports force-kill --dir ~/code/web-app -y # immediate, no confirmation
 ports pause 3000
 ports resume 3000
 
+# Keep a local AI agent, dev server, or tunnel running through idle sleep
+ports caffeinate 3000
+ports --caffeinate 12345
+ports caffeinate --dir ~/code/agent-workspace --yes
+ports uncaffeinate 3000
+
 # Full detail + HTTP probe on whatever's there
 ports inspect 3000
 
 # Pipe into jq
-ports --json --range 3000:9000 | jq '.[] | {port, command, cwd}'
+ports --json --range 3000:9000 | jq '.[] | {port, command, cwd, caffeinated}'
 ```
 
 ### How "dev vs. app" is decided
@@ -241,6 +316,7 @@ sneaks through (e.g. apps installed outside `/Applications/`).
 | Filter by working directory    | ✓       | manual `\| grep`  | ✗              | ✗                     |
 | Kill by port number            | ✓       | ✗               | ✗              | some                  |
 | Bulk kill by project           | ✓       | ✗               | ✗              | ✗                     |
+| Keep awake by port/project     | ✓       | ✗               | ✗              | ✗                     |
 | Hides GUI apps by default      | ✓       | ✗               | ✗              | varies                |
 | Single-binary, no dependencies | ✓       | ✓               | ✓              | varies                |
 | macOS only                     | ✓       | cross           | cross          | varies                |
@@ -254,8 +330,10 @@ This is a small tool with a deliberately small surface. Things explicitly
 - TUI or menu-bar app.
 - Per-port traffic measurement (requires `pktap`/root).
 - Linux/Windows support.
+- Circumventing macOS lid-close sleep rules. `ports caffeinate` uses the
+  supported system assertion mechanism; it does not patch power management.
 
-If any of those would change the tool's character (background process,
+If any of those would change the tool's character (a ports-owned daemon,
 elevated privileges, GUI), they belong in a different project.
 
 ## Contributing
@@ -285,4 +363,6 @@ MIT — see [LICENSE](./LICENSE).
 **Keywords:** macOS port monitor · which process is using port 3000 ·
 kill port 3000 mac · lsof alternative · find process using port macOS ·
 free up port mac · check listening ports macOS · `EADDRINUSE` fix mac ·
-project-aware port listing · dev server cleanup · portscli.com
+project-aware port listing · dev server cleanup · caffeinate port mac ·
+keep Mac awake by pid · run Claude Code with lid closed · run Codex in
+background · keep AI agents running on Mac · portscli.com

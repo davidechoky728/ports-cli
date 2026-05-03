@@ -1,7 +1,7 @@
 {
   "name": "@erdemyilmaz/ports-cli",
-  "version": "0.4.2",
-  "description": "Project-aware lsof for macOS — see which ports are listening, which project they belong to, and kill them by port number.",
+  "version": "0.5.0",
+  "description": "Project-aware lsof for macOS — list ports, kill by port, and keep dev servers or AI agents awake with caffeinate.",
   "bin": {
     "ports": "./bin/ports.js"
   },
@@ -30,7 +30,14 @@
     "udp",
     "networking",
     "process-manager",
-    "port-manager"
+    "port-manager",
+    "caffeinate",
+    "keep-awake",
+    "prevent-sleep",
+    "background-agents",
+    "ai-agents",
+    "claude-code",
+    "codex"
   ],
   "author": "Erdem Yılmaz",
   "license": "MIT",

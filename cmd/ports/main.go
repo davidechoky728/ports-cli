@@ -18,11 +18,11 @@ import (
 	"time"
 )
 
-const version = "0.4.2"
+const version = "0.5.0"
 
 type Listener struct {
-	Command   string    `json:"command"`     // raw process name from lsof (e.g. "ssh")
-	Display   string    `json:"display"`     // human-friendly (e.g. "docker(colima)")
+	Command   string    `json:"command"` // raw process name from lsof (e.g. "ssh")
+	Display   string    `json:"display"` // human-friendly (e.g. "docker(colima)")
 	PID       int       `json:"pid"`
 	User      string    `json:"user"`
 	Protocol  string    `json:"protocol"`
@@ -37,6 +37,9 @@ type Listener struct {
 	ParentPID int       `json:"parent_pid"`
 	ParentCmd string    `json:"parent_command"`
 	Kind      string    `json:"kind"` // "dev", "app", "system"
+
+	Caffeinated    bool  `json:"caffeinated"`
+	CaffeinatePIDs []int `json:"caffeinate_pids,omitempty"`
 }
 
 type filter struct {
@@ -71,6 +74,10 @@ func main() {
 		signalCmd(os.Args[2:], syscall.SIGSTOP, "pause")
 	case "resume":
 		signalCmd(os.Args[2:], syscall.SIGCONT, "resume")
+	case "caffeinate", "keep-awake", "awake":
+		caffeinateCmd(os.Args[2:], true)
+	case "uncaffeinate", "decaffeinate", "sleep-ok":
+		caffeinateCmd(os.Args[2:], false)
 	case "inspect":
 		inspectCmd(os.Args[2:])
 	case "self-destroy":
@@ -80,6 +87,26 @@ func main() {
 	case "help", "--help", "-h":
 		printHelp()
 	default:
+		if os.Args[1] == "--caffeinate" {
+			caffeinateCmd(os.Args[2:], true)
+			return
+		}
+		if strings.HasPrefix(os.Args[1], "--caffeinate=") {
+			caffeinateCmd(append([]string{strings.TrimPrefix(os.Args[1], "--caffeinate=")}, os.Args[2:]...), true)
+			return
+		}
+		if os.Args[1] == "--uncaffeinate" || os.Args[1] == "--decaffeinate" {
+			caffeinateCmd(os.Args[2:], false)
+			return
+		}
+		if strings.HasPrefix(os.Args[1], "--uncaffeinate=") {
+			caffeinateCmd(append([]string{strings.TrimPrefix(os.Args[1], "--uncaffeinate=")}, os.Args[2:]...), false)
+			return
+		}
+		if strings.HasPrefix(os.Args[1], "--decaffeinate=") {
+			caffeinateCmd(append([]string{strings.TrimPrefix(os.Args[1], "--decaffeinate=")}, os.Args[2:]...), false)
+			return
+		}
 		// Treat unknown first arg as a flag for list
 		listCmd(os.Args[1:])
 	}
@@ -94,6 +121,9 @@ USAGE
   ports force-kill <port|pid|--dir PATH> [...]  Send SIGKILL (immediate)
   ports pause <port|pid|--dir PATH> [...]       Freeze process (SIGSTOP)
   ports resume <port|pid|--dir PATH> [...]      Unfreeze process (SIGCONT)
+  ports caffeinate <port|pid|--dir PATH> [...]  Keep Mac awake while process runs
+  ports --caffeinate <port|pid>                 Shortcut for ports caffeinate
+  ports uncaffeinate <port|pid|--dir PATH> [...] Stop awake watchers for target
   ports inspect <port>                          HTTP probe + process detail
   ports self-destroy                            Uninstall ports from this machine
   ports version                                 Print version
@@ -116,9 +146,19 @@ FLAGS (list)
   --reverse / -r       Flip the current sort direction
   --json               Machine-readable output
 
-FLAGS (kill / force-kill / pause / resume)
+FLAGS (kill / force-kill / pause / resume / caffeinate / uncaffeinate)
   --dir PATH           Target every listener whose cwd is at or under PATH
   --yes / -y           Skip the safety confirmation prompt
+
+CAFFEINATE
+  ports caffeinate 3000 starts /usr/bin/caffeinate in the background with
+  -dimsu -w <pid>. It prevents idle sleep while that listener is alive and
+  stops automatically when the process exits. ports uncaffeinate 3000 stops
+  caffeinate watchers for that target without killing the target process.
+
+  macOS may still force sleep when a laptop lid is closed unless the machine
+  is in a supported powered/clamshell setup. ports shows the current watcher
+  status in the CAFFEINATE column.
 
 By default only "dev" listeners are shown (anything not launched from a .app
 bundle or /System/Library path). Use --all to see Spotify, Chrome, system
@@ -140,6 +180,10 @@ EXAMPLES
   ports kill 12345 4000
   ports kill --dir ~/code/web-app      # everything under that project
   ports force-kill --dir ~/code -y     # skip the confirmation
+  ports caffeinate 3000                # keep Mac awake while :3000 runs
+  ports --caffeinate 12345             # same, targeting a pid
+  ports caffeinate --dir ~/code/agent  # keep a project stack awake
+  ports uncaffeinate 3000              # stop the awake watcher
 `)
 }
 
@@ -390,9 +434,9 @@ func renderTable(ls []Listener, showKind bool) {
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	if showKind {
-		fmt.Fprintln(w, "PORT\tPROTO\tPID\tCOMMAND\tPARENT\tPATH\tKIND\tHOST\tAGE")
+		fmt.Fprintln(w, "PORT\tPROTO\tPID\tCOMMAND\tPARENT\tPATH\tKIND\tCAFFEINATE\tHOST\tAGE")
 	} else {
-		fmt.Fprintln(w, "PORT\tPROTO\tPID\tCOMMAND\tPARENT\tPATH\tHOST\tAGE")
+		fmt.Fprintln(w, "PORT\tPROTO\tPID\tCOMMAND\tPARENT\tPATH\tCAFFEINATE\tHOST\tAGE")
 	}
 	for _, l := range ls {
 		path := prettyPath(l.Cwd)
@@ -405,19 +449,30 @@ func renderTable(ls []Listener, showKind bool) {
 			display = l.Command
 		}
 		if showKind {
+			fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				l.Port, l.Protocol, l.PID, truncate(display, 30),
+				truncate(parent, 14), truncateLeft(path, 42),
+				l.Kind, caffeineSummary(l.CaffeinatePIDs), l.Host, l.Age)
+		} else {
 			fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
 				l.Port, l.Protocol, l.PID, truncate(display, 30),
 				truncate(parent, 14), truncateLeft(path, 42),
-				l.Kind, l.Host, l.Age)
-		} else {
-			fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
-				l.Port, l.Protocol, l.PID, truncate(display, 30),
-				truncate(parent, 14), truncateLeft(path, 42),
-				l.Host, l.Age)
+				caffeineSummary(l.CaffeinatePIDs), l.Host, l.Age)
 		}
 	}
 	w.Flush()
 	fmt.Printf("\n%d listener(s)\n", len(ls))
+}
+
+func caffeineSummary(pids []int) string {
+	switch len(pids) {
+	case 0:
+		return "-"
+	case 1:
+		return fmt.Sprintf("on:%d", pids[0])
+	default:
+		return fmt.Sprintf("on:%d+", len(pids))
+	}
 }
 
 func prettyPath(p string) string {
@@ -457,6 +512,7 @@ func fetchListeners() ([]Listener, error) {
 	all := append(tcp, udp...)
 	deduped := dedupe(all)
 	enrichDocker(deduped)
+	enrichCaffeinateStatus(deduped)
 	return deduped, nil
 }
 
@@ -559,6 +615,91 @@ func enrichDocker(listeners []Listener) {
 			listeners[i].Display = "docker(" + info.name + ")"
 		}
 	}
+}
+
+func enrichCaffeinateStatus(listeners []Listener) {
+	watchers := findCaffeinateWatchers()
+	for i := range listeners {
+		pids := append([]int(nil), watchers[listeners[i].PID]...)
+		if len(pids) == 0 {
+			continue
+		}
+		sort.Ints(pids)
+		listeners[i].Caffeinated = true
+		listeners[i].CaffeinatePIDs = pids
+	}
+}
+
+func findCaffeinateWatchers() map[int][]int {
+	out := map[int][]int{}
+	ps, err := exec.Command("/bin/ps", "axo", "pid=,command=").Output()
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(string(ps), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		firstSpace := strings.IndexAny(line, " \t")
+		if firstSpace < 0 {
+			continue
+		}
+		watcherPID, err := strconv.Atoi(strings.TrimSpace(line[:firstSpace]))
+		if err != nil || watcherPID == os.Getpid() {
+			continue
+		}
+		command := strings.TrimSpace(line[firstSpace:])
+		if !isCaffeinateCommand(command) {
+			continue
+		}
+		for _, targetPID := range caffeinateWatchTargets(command) {
+			out[targetPID] = append(out[targetPID], watcherPID)
+		}
+	}
+	for pid := range out {
+		sort.Ints(out[pid])
+	}
+	return out
+}
+
+func isCaffeinateCommand(command string) bool {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return false
+	}
+	return filepath.Base(fields[0]) == "caffeinate"
+}
+
+func caffeinateWatchTargets(command string) []int {
+	fields := strings.Fields(command)
+	if len(fields) < 2 {
+		return nil
+	}
+	var targets []int
+	for i := 1; i < len(fields); i++ {
+		tok := fields[i]
+		if tok == "--" {
+			break
+		}
+		if !strings.HasPrefix(tok, "-") {
+			break
+		}
+		switch {
+		case tok == "-w" && i+1 < len(fields):
+			if pid, err := strconv.Atoi(fields[i+1]); err == nil {
+				targets = append(targets, pid)
+			}
+			i++
+		case strings.HasPrefix(tok, "-w") && len(tok) > 2:
+			if pid, err := strconv.Atoi(tok[2:]); err == nil {
+				targets = append(targets, pid)
+			}
+		case tok == "-t" && i+1 < len(fields):
+			i++
+		}
+	}
+	return targets
 }
 
 func runLsof(args []string, proto string) ([]Listener, error) {
@@ -831,19 +972,19 @@ func classify(command, exePath, user string) string {
 	}
 	// Known noisy GUI helpers / agents that sometimes live outside .app bundles
 	noisy := map[string]bool{
-		"rapportd":         true,
-		"sharingd":         true,
-		"mDNSResponder":    true,
+		"rapportd":          true,
+		"sharingd":          true,
+		"mDNSResponder":     true,
 		"identityservicesd": true,
-		"cloudd":           true,
-		"bluetoothd":       true,
-		"airportd":         true,
-		"ControlCenter":    true,
-		"replicatord":      true,
-		"remoted":          true,
-		"nehelper":         true,
-		"trustd":           true,
-		"netbiosd":         true,
+		"cloudd":            true,
+		"bluetoothd":        true,
+		"airportd":          true,
+		"ControlCenter":     true,
+		"replicatord":       true,
+		"remoted":           true,
+		"nehelper":          true,
+		"trustd":            true,
+		"netbiosd":          true,
 	}
 	if noisy[command] {
 		return "system"
@@ -868,27 +1009,34 @@ func humanAge(t time.Time) string {
 	}
 }
 
-func signalCmd(args []string, sig syscall.Signal, label string) {
-	var (
-		positional []string
-		dirPrefix  string
-		yes        bool
-	)
+type targetArgs struct {
+	positional []string
+	dirPrefix  string
+	yes        bool
+}
+
+func parseTargetArgs(args []string) targetArgs {
+	var out targetArgs
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "--dir" && i+1 < len(args):
-			dirPrefix = resolveDir(args[i+1])
+			out.dirPrefix = resolveDir(args[i+1])
 			i++
 		case strings.HasPrefix(a, "--dir="):
-			dirPrefix = resolveDir(strings.TrimPrefix(a, "--dir="))
+			out.dirPrefix = resolveDir(strings.TrimPrefix(a, "--dir="))
 		case a == "--yes", a == "-y":
-			yes = true
+			out.yes = true
 		default:
-			positional = append(positional, a)
+			out.positional = append(out.positional, a)
 		}
 	}
-	if dirPrefix == "" && len(positional) == 0 {
+	return out
+}
+
+func signalCmd(args []string, sig syscall.Signal, label string) {
+	targets := parseTargetArgs(args)
+	if targets.dirPrefix == "" && len(targets.positional) == 0 {
 		exitErr(fmt.Errorf("%s requires at least one port, pid, or --dir PATH", label))
 	}
 	listeners, err := fetchListeners()
@@ -896,27 +1044,15 @@ func signalCmd(args []string, sig syscall.Signal, label string) {
 		exitErr(err)
 	}
 
-	pids := map[int]string{}
-	if dirPrefix != "" {
-		for _, l := range listeners {
-			if pathHasPrefix(l.Cwd, dirPrefix) {
-				pids[l.PID] = fmt.Sprintf("%s on :%d (%s)", l.Command, l.Port, prettyPath(l.Cwd))
-			}
-		}
-	}
-	if len(positional) > 0 {
-		for k, v := range resolveTargets(positional, listeners) {
-			pids[k] = v
-		}
-	}
+	pids := resolveProcessTargets(targets, listeners)
 	if len(pids) == 0 {
-		if dirPrefix != "" {
-			exitErr(fmt.Errorf("no listening processes found under %s", dirPrefix))
+		if targets.dirPrefix != "" {
+			exitErr(fmt.Errorf("no listening processes found under %s", targets.dirPrefix))
 		}
 		exitErr(fmt.Errorf("no matching processes"))
 	}
 
-	needsConfirm := !yes && (dirPrefix != "" || len(pids) > 1)
+	needsConfirm := !targets.yes && (targets.dirPrefix != "" || len(pids) > 1)
 	if needsConfirm {
 		fmt.Printf("About to %s %d process(es):\n", label, len(pids))
 		for pid, why := range pids {
@@ -942,6 +1078,27 @@ func signalCmd(args []string, sig syscall.Signal, label string) {
 		}
 		fmt.Printf("  %s pid %d (%s) ✓\n", label, pid, why)
 	}
+}
+
+func resolveProcessTargets(targets targetArgs, listeners []Listener) map[int]string {
+	pids := map[int]string{}
+	if targets.dirPrefix != "" {
+		for _, l := range listeners {
+			if pathHasPrefix(l.Cwd, targets.dirPrefix) {
+				display := l.Display
+				if display == "" {
+					display = l.Command
+				}
+				pids[l.PID] = fmt.Sprintf("%s on :%d (%s)", display, l.Port, prettyPath(l.Cwd))
+			}
+		}
+	}
+	if len(targets.positional) > 0 {
+		for k, v := range resolveTargets(targets.positional, listeners) {
+			pids[k] = v
+		}
+	}
+	return pids
 }
 
 func resolveTargets(args []string, listeners []Listener) map[int]string {
@@ -981,6 +1138,110 @@ func resolveTargets(args []string, listeners []Listener) map[int]string {
 		}
 	}
 	return out
+}
+
+func caffeinateCmd(args []string, start bool) {
+	label := "caffeinate"
+	if !start {
+		label = "uncaffeinate"
+	}
+	targets := parseTargetArgs(args)
+	if targets.dirPrefix == "" && len(targets.positional) == 0 {
+		exitErr(fmt.Errorf("%s requires at least one port, pid, or --dir PATH", label))
+	}
+	listeners, err := fetchListeners()
+	if err != nil {
+		exitErr(err)
+	}
+	pids := resolveProcessTargets(targets, listeners)
+	if len(pids) == 0 {
+		if targets.dirPrefix != "" {
+			exitErr(fmt.Errorf("no listening processes found under %s", targets.dirPrefix))
+		}
+		exitErr(fmt.Errorf("no matching processes"))
+	}
+
+	needsConfirm := !targets.yes && (targets.dirPrefix != "" || len(pids) > 1)
+	if needsConfirm {
+		action := "start caffeinate watchers for"
+		if !start {
+			action = "stop caffeinate watchers for"
+		}
+		fmt.Printf("About to %s %d process(es):\n", action, len(pids))
+		for pid, why := range pids {
+			fmt.Printf("  pid %d — %s\n", pid, why)
+		}
+		fmt.Print("Continue? [y/N] ")
+		r := bufio.NewReader(os.Stdin)
+		ans, _ := r.ReadString('\n')
+		if strings.TrimSpace(strings.ToLower(ans)) != "y" {
+			fmt.Println("Aborted.")
+			return
+		}
+	}
+
+	watchers := findCaffeinateWatchers()
+	for pid, why := range pids {
+		if start {
+			if active := watchers[pid]; len(active) > 0 {
+				fmt.Printf("  caffeinate pid %d (%s) already active via watcher(s) %s\n", pid, why, intList(active))
+				continue
+			}
+			watcherPID, err := startCaffeinateWatcher(pid)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  caffeinate pid %d (%s): %v\n", pid, why, err)
+				continue
+			}
+			fmt.Printf("  caffeinate pid %d (%s) ✓ watcher %d\n", pid, why, watcherPID)
+			continue
+		}
+
+		active := watchers[pid]
+		if len(active) == 0 {
+			fmt.Printf("  uncaffeinate pid %d (%s): no active watcher\n", pid, why)
+			continue
+		}
+		for _, watcherPID := range active {
+			if err := syscall.Kill(watcherPID, syscall.SIGTERM); err != nil {
+				fmt.Fprintf(os.Stderr, "  uncaffeinate watcher %d for pid %d (%s): %v\n", watcherPID, pid, why, err)
+				continue
+			}
+			fmt.Printf("  uncaffeinate pid %d (%s) ✓ stopped watcher %d\n", pid, why, watcherPID)
+		}
+	}
+}
+
+func startCaffeinateWatcher(pid int) (int, error) {
+	if !procExists(pid) {
+		return 0, fmt.Errorf("pid %d does not exist", pid)
+	}
+	cmd := exec.Command("/usr/bin/caffeinate", "-dimsu", "-w", strconv.Itoa(pid))
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err == nil {
+		defer devNull.Close()
+		cmd.Stdin = devNull
+		cmd.Stdout = devNull
+		cmd.Stderr = devNull
+	}
+	if err := cmd.Start(); err != nil {
+		return 0, err
+	}
+	watcherPID := cmd.Process.Pid
+	if err := cmd.Process.Release(); err != nil {
+		return watcherPID, err
+	}
+	return watcherPID, nil
+}
+
+func intList(nums []int) string {
+	if len(nums) == 0 {
+		return "-"
+	}
+	parts := make([]string, len(nums))
+	for i, n := range nums {
+		parts[i] = strconv.Itoa(n)
+	}
+	return strings.Join(parts, ",")
 }
 
 func procExists(pid int) bool {
@@ -1025,6 +1286,11 @@ func inspectCmd(args []string) {
 		fmt.Printf("Bind       %s\n", l.Address)
 		fmt.Printf("Started    %s (%s ago)\n", l.StartedAt.Format(time.RFC1123), l.Age)
 		fmt.Printf("Kind       %s\n", l.Kind)
+		if l.Caffeinated {
+			fmt.Printf("Caffeinate active (watcher pid(s): %s)\n", intList(l.CaffeinatePIDs))
+		} else {
+			fmt.Printf("Caffeinate inactive\n")
+		}
 		probeHTTP(l.Host, l.Port)
 		fmt.Println()
 	}
