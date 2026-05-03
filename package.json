@@ -15,17 +15,26 @@
   ],
   "keywords": [
     "ports",
+    "ports-cli",
+    "portscli",
     "lsof",
+    "lsof-alternative",
     "cli",
     "macos",
+    "macos-cli",
     "developer-tools",
+    "kill-port",
+    "kill-port-3000",
+    "eaddrinuse",
     "tcp",
     "udp",
-    "networking"
+    "networking",
+    "process-manager",
+    "port-manager"
   ],
   "author": "Erdem Yılmaz",
   "license": "MIT",
-  "homepage": "https://github.com/erdemylmaz/ports-cli",
+  "homepage": "https://portscli.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/erdemylmaz/ports-cli.git"

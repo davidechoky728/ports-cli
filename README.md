@@ -1,9 +1,12 @@
 # ports — project-aware lsof for macOS
 
 > The macOS CLI that finally tells you **which project** owns port 3000.
+>
+> **Website:** [portscli.com](https://portscli.com)
 
+[![Website](https://img.shields.io/badge/website-portscli.com-7ee787)](https://portscli.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![macOS](https://img.shields.io/badge/macOS-12%2B-black?logo=apple)](https://github.com/erdemylmaz/ports-cli)
+[![macOS](https://img.shields.io/badge/macOS-12%2B-black?logo=apple)](https://portscli.com)
 [![Built with Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go)](https://go.dev/)
 [![Release](https://img.shields.io/github/v/release/erdemylmaz/ports-cli)](https://github.com/erdemylmaz/ports-cli/releases)
 
@@ -29,8 +32,9 @@ PORT   PROTO  PID    COMMAND  PARENT          PATH                              
 ### Homebrew (recommended)
 
 ```sh
-brew tap erdemylmaz/ports-cli
-brew install ports
+brew install erdemylmaz/ports-cli/ports
+# or, equivalently:
+brew tap erdemylmaz/ports-cli && brew install ports
 ```
 
 ### npm
@@ -263,6 +267,15 @@ and bug fixes for edge-case `lsof` output.
 Things less likely to be merged: anything that adds a daemon, a database,
 external dependencies, or a config file.
 
+## Links
+
+- **Website:** [portscli.com](https://portscli.com) — install instructions, examples, FAQ
+- **Source:** [github.com/erdemylmaz/ports-cli](https://github.com/erdemylmaz/ports-cli)
+- **Releases:** [github.com/erdemylmaz/ports-cli/releases](https://github.com/erdemylmaz/ports-cli/releases)
+- **Homebrew tap:** [github.com/erdemylmaz/homebrew-ports-cli](https://github.com/erdemylmaz/homebrew-ports-cli)
+- **npm:** [@erdemyilmaz/ports-cli](https://www.npmjs.com/package/@erdemyilmaz/ports-cli)
+- **Author:** [erdm.io](https://erdm.io)
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).
@@ -272,4 +285,4 @@ MIT — see [LICENSE](./LICENSE).
 **Keywords:** macOS port monitor · which process is using port 3000 ·
 kill port 3000 mac · lsof alternative · find process using port macOS ·
 free up port mac · check listening ports macOS · `EADDRINUSE` fix mac ·
-project-aware port listing · dev server cleanup
+project-aware port listing · dev server cleanup · portscli.com
