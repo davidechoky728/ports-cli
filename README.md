@@ -1,7 +1,16 @@
-# ports
+# ports — project-aware lsof for macOS
 
-A small macOS CLI that tells you what's actually listening on your laptop, and
-why — with the context `lsof` doesn't give you.
+> The macOS CLI that finally tells you **which project** owns port 3000.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![macOS](https://img.shields.io/badge/macOS-12%2B-black?logo=apple)](https://github.com/erdemylmaz/ports-cli)
+[![Built with Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go)](https://go.dev/)
+[![Release](https://img.shields.io/github/v/release/erdemylmaz/ports-cli)](https://github.com/erdemylmaz/ports-cli/releases)
+
+`ports` is a small, single-binary, zero-dependency Go CLI for macOS that
+shows what's actually listening on your laptop and **why** — with the
+project context, working directory, parent process, and uptime that `lsof`
+doesn't give you. Kill, pause, or resume processes by port number.
 
 ```
 $ ports
@@ -13,6 +22,61 @@ PORT   PROTO  PID    COMMAND  PARENT          PATH                              
 51606  TCP    91160  workerd  launchd         ~/code/edge-app                   127.0.0.1  9d2h
 
 5 listener(s)
+```
+
+## Install
+
+### Homebrew (recommended)
+
+```sh
+brew tap erdemylmaz/ports-cli
+brew install ports
+```
+
+### npm
+
+```sh
+npm install -g @erdemylmaz/ports-cli
+# or
+pnpm add -g @erdemylmaz/ports-cli
+# or
+yarn global add @erdemylmaz/ports-cli
+```
+
+The npm package is a thin wrapper that downloads the right prebuilt binary
+from GitHub Releases on `postinstall`. macOS only.
+
+### Go
+
+```sh
+go install github.com/erdemylmaz/ports-cli/cmd/ports@latest
+```
+
+### Prebuilt binary (no toolchain needed)
+
+```sh
+# Apple Silicon
+curl -L -o ports https://github.com/erdemylmaz/ports-cli/releases/latest/download/ports-darwin-arm64
+# Intel
+curl -L -o ports https://github.com/erdemylmaz/ports-cli/releases/latest/download/ports-darwin-amd64
+
+chmod +x ports && mv ports ~/.local/bin/   # or /usr/local/bin/
+```
+
+### Build from source
+
+```sh
+git clone https://github.com/erdemylmaz/ports-cli.git
+cd ports-cli
+go build -o ports ./cmd/ports
+mv ports ~/.local/bin/
+```
+
+Verify:
+
+```sh
+ports version
+ports --help
 ```
 
 ## Why this exists
@@ -51,39 +115,17 @@ you're trying to answer different questions:
 
 The whole binary is one Go file, no third-party dependencies.
 
-## Install
-
-You need a Go toolchain (`brew install go`).
-
-```sh
-git clone https://github.com/erdemylmaz/ports-cli.git
-cd ports-cli
-go build -o ports ./cmd/ports
-
-# Pick a location on your $PATH
-mkdir -p ~/.local/bin && cp ports ~/.local/bin/ports
-# or
-sudo cp ports /usr/local/bin/ports
-```
-
-Verify:
-
-```sh
-ports version
-ports --help
-```
-
 ## Usage
 
 ```
-ports [list] [flags]              Show listening ports (default)
-ports kill <port|pid> [...]       Send SIGTERM (graceful)
-ports force-kill <port|pid> [...] Send SIGKILL (immediate)
-ports pause <port|pid> [...]      Freeze process (SIGSTOP)
-ports resume <port|pid> [...]     Unfreeze process (SIGCONT)
-ports inspect <port>              Full process detail + HTTP probe
-ports self-destroy                Uninstall the binary
-ports version                     Print version
+ports [list] [flags]                          Show listening ports (default)
+ports kill <port|pid|--dir PATH> [...]        Send SIGTERM (graceful)
+ports force-kill <port|pid|--dir PATH> [...]  Send SIGKILL (immediate)
+ports pause <port|pid|--dir PATH> [...]       Freeze process (SIGSTOP)
+ports resume <port|pid|--dir PATH> [...]      Unfreeze process (SIGCONT)
+ports inspect <port>                          Full process detail + HTTP probe
+ports self-destroy                            Uninstall the binary
+ports version                                 Print version
 ```
 
 ### Flags
@@ -184,6 +226,20 @@ Heuristics aren't perfect. Edit the `classify` function in
 `cmd/ports/main.go` to teach it about anything in your environment that
 sneaks through (e.g. apps installed outside `/Applications/`).
 
+## Comparison
+
+|                                | `ports` | `lsof -i -P -n` | `netstat -anv` | `lsof-ng` / TUI tools |
+| ------------------------------ | ------- | --------------- | -------------- | --------------------- |
+| Project / cwd shown            | ✓       | ✗               | ✗              | rare                  |
+| Parent process shown           | ✓       | ✗               | ✗              | rare                  |
+| Process age / uptime           | ✓       | ✗               | ✗              | rare                  |
+| Filter by working directory    | ✓       | manual `\| grep`  | ✗              | ✗                     |
+| Kill by port number            | ✓       | ✗               | ✗              | some                  |
+| Bulk kill by project           | ✓       | ✗               | ✗              | ✗                     |
+| Hides GUI apps by default      | ✓       | ✗               | ✗              | varies                |
+| Single-binary, no dependencies | ✓       | ✓               | ✓              | varies                |
+| macOS only                     | ✓       | cross           | cross          | varies                |
+
 ## Scope, on purpose
 
 This is a small tool with a deliberately small surface. Things explicitly
@@ -209,3 +265,10 @@ external dependencies, or a config file.
 ## License
 
 MIT — see [LICENSE](./LICENSE).
+
+---
+
+**Keywords:** macOS port monitor · which process is using port 3000 ·
+kill port 3000 mac · lsof alternative · find process using port macOS ·
+free up port mac · check listening ports macOS · `EADDRINUSE` fix mac ·
+project-aware port listing · dev server cleanup

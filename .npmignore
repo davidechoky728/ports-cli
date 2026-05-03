@@ -1,0 +1,7 @@
+cmd/
+dist/
+.github/
+go.mod
+go.sum
+*.go
+.gitignore

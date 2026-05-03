@@ -13,3 +13,4 @@
 *.test
 *.out
 coverage.txt
+/dist

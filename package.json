@@ -1,0 +1,46 @@
+{
+  "name": "@erdemylmaz/ports-cli",
+  "version": "0.3.0",
+  "description": "Project-aware lsof for macOS — see which ports are listening, which project they belong to, and kill them by port number.",
+  "bin": {
+    "ports": "./bin/ports.js"
+  },
+  "scripts": {
+    "postinstall": "node ./bin/install.js"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "ports",
+    "lsof",
+    "cli",
+    "macos",
+    "developer-tools",
+    "tcp",
+    "udp",
+    "networking"
+  ],
+  "author": "Erdem Yılmaz",
+  "license": "MIT",
+  "homepage": "https://github.com/erdemylmaz/ports-cli",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/erdemylmaz/ports-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/erdemylmaz/ports-cli/issues"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ],
+  "engines": {
+    "node": ">=14"
+  }
+}
