@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,7 +17,7 @@ import (
 	"time"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 type Listener struct {
 	Command   string    `json:"command"`
@@ -41,6 +42,7 @@ type filter struct {
 	portMax   int
 	pid       int
 	cmdSubstr string
+	dirPrefix string
 	since     time.Duration
 	asJSON    bool
 	tcpOnly   bool
@@ -98,6 +100,8 @@ FLAGS (list)
   --range A:B          Only ports in range, e.g. 3000:6000
   --pid N              Only this PID
   --cmd SUBSTR         Filter by command name (case-insensitive)
+  --dir PATH           Only processes whose cwd is at or under PATH
+                       (accepts ~, relative, or absolute paths)
   --since DUR          Only processes started within DUR (e.g. 30m, 2h, today)
   --today              Shortcut for processes started since 00:00
   --tcp                TCP only
@@ -113,6 +117,8 @@ EXAMPLES
   ports --all
   ports --range 3000:9000 --tcp
   ports --cmd node --since 1h
+  ports --dir ~/Documents              # only stuff running under ~/Documents
+  ports --dir .                        # only stuff in the current directory
   ports kill 3000
   ports kill 12345 4000
 `)
@@ -172,6 +178,11 @@ func parseListFlags(args []string) filter {
 			i++
 		case strings.HasPrefix(a, "--cmd="):
 			f.cmdSubstr = strings.ToLower(strings.TrimPrefix(a, "--cmd="))
+		case a == "--dir" && i+1 < len(args):
+			f.dirPrefix = resolveDir(args[i+1])
+			i++
+		case strings.HasPrefix(a, "--dir="):
+			f.dirPrefix = resolveDir(strings.TrimPrefix(a, "--dir="))
 		case a == "--since" && i+1 < len(args):
 			f.since = parseDur(args[i+1])
 			i++
@@ -208,6 +219,37 @@ func sinceMidnight() time.Duration {
 	return now.Sub(mid)
 }
 
+func resolveDir(p string) string {
+	if p == "" {
+		return ""
+	}
+	if p == "~" {
+		p = os.Getenv("HOME")
+	} else if strings.HasPrefix(p, "~/") {
+		p = filepath.Join(os.Getenv("HOME"), p[2:])
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return filepath.Clean(p)
+	}
+	return abs
+}
+
+func pathHasPrefix(path, prefix string) bool {
+	if path == "" || prefix == "" {
+		return false
+	}
+	cleaned := filepath.Clean(path)
+	if cleaned == prefix {
+		return true
+	}
+	prefixWithSep := prefix
+	if !strings.HasSuffix(prefixWithSep, string(filepath.Separator)) {
+		prefixWithSep += string(filepath.Separator)
+	}
+	return strings.HasPrefix(cleaned+string(filepath.Separator), prefixWithSep)
+}
+
 func applyFilters(in []Listener, f filter) []Listener {
 	out := in[:0]
 	cutoff := time.Time{}
@@ -229,6 +271,9 @@ func applyFilters(in []Listener, f filter) []Listener {
 		}
 		if f.cmdSubstr != "" && !strings.Contains(strings.ToLower(l.Command), f.cmdSubstr) &&
 			!strings.Contains(strings.ToLower(l.FullCmd), f.cmdSubstr) {
+			continue
+		}
+		if f.dirPrefix != "" && !pathHasPrefix(l.Cwd, f.dirPrefix) {
 			continue
 		}
 		if !cutoff.IsZero() && l.StartedAt.Before(cutoff) {

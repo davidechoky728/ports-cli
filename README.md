@@ -95,6 +95,7 @@ ports version                     Print version
 | `--range A:B`    | Only ports in range, e.g. `--range 3000:9000`              |
 | `--pid N`        | Only this PID                                              |
 | `--cmd SUBSTR`   | Filter by command name (case-insensitive)                  |
+| `--dir PATH`     | Only processes whose cwd is at or under `PATH` (accepts `~`, relative, or absolute paths) |
 | `--since DUR`    | Started within DUR (e.g. `30m`, `2h`, `today`)             |
 | `--today`        | Shortcut for processes started since 00:00                 |
 | `--tcp`          | TCP only                                                   |
@@ -118,6 +119,11 @@ ports --range 3000:9000 --tcp
 
 # Node servers started in the last hour
 ports --cmd node --since 1h
+
+# Only listeners running under a specific directory tree
+ports --dir ~/Documents
+ports --dir ~/code/web-app
+ports --dir .                          # current directory
 
 # Free up port 3000 (graceful)
 ports kill 3000
