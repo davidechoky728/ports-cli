@@ -17,10 +17,11 @@ import (
 	"time"
 )
 
-const version = "0.3.0"
+const version = "0.4.0"
 
 type Listener struct {
-	Command   string    `json:"command"`
+	Command   string    `json:"command"`     // raw process name from lsof (e.g. "ssh")
+	Display   string    `json:"display"`     // human-friendly (e.g. "docker(colima)")
 	PID       int       `json:"pid"`
 	User      string    `json:"user"`
 	Protocol  string    `json:"protocol"`
@@ -358,7 +359,9 @@ func applyFilters(in []Listener, f filter) []Listener {
 		if f.pid >= 0 && l.PID != f.pid {
 			continue
 		}
-		if f.cmdSubstr != "" && !strings.Contains(strings.ToLower(l.Command), f.cmdSubstr) &&
+		if f.cmdSubstr != "" &&
+			!strings.Contains(strings.ToLower(l.Command), f.cmdSubstr) &&
+			!strings.Contains(strings.ToLower(l.Display), f.cmdSubstr) &&
 			!strings.Contains(strings.ToLower(l.FullCmd), f.cmdSubstr) {
 			continue
 		}
@@ -396,14 +399,18 @@ func renderTable(ls []Listener, showKind bool) {
 		if parent == "" {
 			parent = "?"
 		}
+		display := l.Display
+		if display == "" {
+			display = l.Command
+		}
 		if showKind {
 			fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				l.Port, l.Protocol, l.PID, truncate(l.Command, 22),
+				l.Port, l.Protocol, l.PID, truncate(display, 22),
 				truncate(parent, 14), truncateLeft(path, 42),
 				l.Kind, l.Host, l.Age)
 		} else {
 			fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
-				l.Port, l.Protocol, l.PID, truncate(l.Command, 22),
+				l.Port, l.Protocol, l.PID, truncate(display, 22),
 				truncate(parent, 14), truncateLeft(path, 42),
 				l.Host, l.Age)
 		}
@@ -482,6 +489,7 @@ func parseLsofF(s, proto string) []Listener {
 		info := getProc(curPID)
 		out = append(out, Listener{
 			Command:   curCmd,
+			Display:   humanizeCommand(curCmd, info.fullCmd, info.exePath),
 			PID:       curPID,
 			User:      curUser,
 			Protocol:  proto,
@@ -671,6 +679,29 @@ func procCwd(pid int) string {
 		}
 	}
 	return ""
+}
+
+// humanizeCommand turns truthful-but-confusing process names into something a
+// reader recognizes. The classic case: Colima/Lima forward Docker container
+// ports out of the VM via an SSH multiplexer, so the host-side listener is
+// really named "ssh" — but the user thinks of it as docker.
+func humanizeCommand(command, fullCmd, exePath string) string {
+	if command != "ssh" {
+		return command
+	}
+	if strings.Contains(fullCmd, "/.colima/") || strings.Contains(fullCmd, "colima/ssh.sock") {
+		return "docker(colima)"
+	}
+	if strings.Contains(fullCmd, "/.lima/") || (strings.Contains(fullCmd, "/lima/") && strings.Contains(fullCmd, "ssh.sock")) {
+		return "docker(lima)"
+	}
+	if strings.Contains(fullCmd, "orbstack") || strings.Contains(exePath, "orbstack") {
+		return "docker(orbstack)"
+	}
+	if strings.Contains(fullCmd, " -L ") || strings.Contains(fullCmd, " -R ") {
+		return "ssh→tunnel"
+	}
+	return command
 }
 
 // classify returns "app" for GUI app-bundle processes, "system" for OS daemons,
@@ -877,7 +908,11 @@ func inspectCmd(args []string) {
 	for _, l := range matches {
 		fmt.Printf("Port       %d (%s)\n", l.Port, l.Protocol)
 		fmt.Printf("PID        %d\n", l.PID)
-		fmt.Printf("Command    %s\n", l.Command)
+		fmt.Printf("Command    %s", l.Command)
+		if l.Display != "" && l.Display != l.Command {
+			fmt.Printf("  →  %s", l.Display)
+		}
+		fmt.Println()
 		fmt.Printf("Full cmd   %s\n", l.FullCmd)
 		fmt.Printf("Exe path   %s\n", l.ExePath)
 		fmt.Printf("Cwd        %s\n", prettyPath(l.Cwd))

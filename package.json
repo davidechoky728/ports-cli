@@ -1,6 +1,6 @@
 {
   "name": "@erdemyilmaz/ports-cli",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Project-aware lsof for macOS — see which ports are listening, which project they belong to, and kill them by port number.",
   "bin": {
     "ports": "./bin/ports.js"

@@ -133,6 +133,7 @@ ports version                                 Print version
 | Flag             | Effect                                                     |
 | ---------------- | ---------------------------------------------------------- |
 | `--all` / `-a`   | Include GUI apps and system services                       |
+| _(automatic)_    | Docker via Colima, Lima, or OrbStack appears as `docker(...)` instead of `ssh`. The truthful raw command is preserved in JSON output and `ports inspect`. |
 | `--apps`         | Show **only** GUI apps and system services                 |
 | `--range A:B`    | Only ports in range, e.g. `--range 3000:9000`              |
 | `--pid N`        | Only this PID                                              |
