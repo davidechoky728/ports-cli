@@ -1,0 +1,15 @@
+# built binary (root) and any output named "ports" produced by `go build`
+/ports
+
+# macOS
+.DS_Store
+
+# editor
+.vscode/
+.idea/
+*.swp
+
+# go test artifacts
+*.test
+*.out
+coverage.txt
