@@ -13,8 +13,10 @@
 `ports` is a small, single-binary, zero-dependency Go CLI for macOS that
 shows what's actually listening on your laptop and **why** — with the
 project context, working directory, parent process, uptime, and caffeinate
-status that `lsof` doesn't give you. Kill, pause, resume, or keep processes
-awake by port number.
+status that `lsof` doesn't give you. It can also find local AI app and agent
+sessions that do not bind ports, so you can keep the exact process awake by
+PID. Kill, pause, resume, or caffeinate by port number, PID, project
+directory, or AI session.
 
 ```
 $ ports
@@ -39,13 +41,29 @@ owns that port:
 ports caffeinate 3000                 # keep whatever owns :3000 awake
 ports --caffeinate 12345              # keep a PID awake directly
 ports caffeinate --dir ~/code/agent   # keep project listeners awake
+ports --find codex "claude code"      # find AI/app/agent PIDs
+ports caffeinate codex                # keep matching Codex app/agent/session PIDs awake
+ports caffeinate codex --dir ~/code/agent --follow
+                                      # keep new Codex children in that project awake
+ports caffeinate --find cursor        # explicit AI selector for caffeinate
+ports caffeinate --pid 12345          # keep an exact PID awake
 ports uncaffeinate 3000               # stop watcher, keep process running
+ports decaffeinate                    # stop all caffeinate watchers found
 ```
 
 `ports` then shows `CAFFEINATE on:<watcher-pid>` in the normal table, so you
 can see whether a Claude Code, Codex, or background-agent session is protected
 from idle sleep. For lid-closed runs, keep the Mac on power in a supported
 clamshell setup; macOS can still force sleep outside those conditions.
+
+`ports --find codex "claude code" gemini cursor` inspects the live process tree for
+AI-related app roots, CLI agents, workspace sessions, MCP/tool helpers, and
+workspace child processes. It prints identity, role, workspace/CWD, age,
+listener ports, caffeinate status, parent chain, and exact `--pid` commands.
+The same names can be used directly with `ports caffeinate <name>` and
+`ports uncaffeinate <name>`. Add `--dir PATH` to constrain AI matches to a
+project workspace, and add `--follow` when newly spawned agent children should
+be caffeinated automatically.
 
 ## Install
 
@@ -130,10 +148,12 @@ you're trying to answer different questions:
 
 ## What it isn't
 
-- **Not a ports daemon.** No LaunchAgent, no SQLite, no `~/Library/...`
-  data dir. Every invocation reads live state. When you ask for
-  `ports caffeinate`, it starts a normal macOS `/usr/bin/caffeinate` watcher
-  for the target PID and that watcher exits automatically with the target.
+- **Not an always-on ports daemon.** No LaunchAgent, no SQLite, no
+  `~/Library/...` data dir. Every normal invocation reads live state. When you
+  ask for `ports caffeinate`, it starts a normal macOS `/usr/bin/caffeinate`
+  watcher for the target PID and that watcher exits automatically with the
+  target. `--follow` is the opt-in exception: it starts a small background
+  `ports` watcher that rescans the same selector.
 - **Not cross-platform.** macOS only — it shells out to `/usr/sbin/lsof` and
   `/bin/ps` with macOS-specific flags.
 - **Not a monitor.** No history, no notifications, no traffic metrics. If you
@@ -155,9 +175,12 @@ ports kill <port|pid|--dir PATH> [...]        Send SIGTERM (graceful)
 ports force-kill <port|pid|--dir PATH> [...]  Send SIGKILL (immediate)
 ports pause <port|pid|--dir PATH> [...]       Freeze process (SIGSTOP)
 ports resume <port|pid|--dir PATH> [...]      Unfreeze process (SIGCONT)
-ports caffeinate <port|pid|--dir PATH> [...]  Keep Mac awake while process runs
+ports caffeinate [<port|pid|AI|--dir PATH> ...] Keep Mac awake while process runs
 ports --caffeinate <port|pid>                 Shortcut for ports caffeinate
-ports uncaffeinate <port|pid|--dir PATH> [...] Stop awake watchers
+ports uncaffeinate [<port|pid|AI|--dir PATH> ...] Stop awake watchers
+ports decaffeinate [<port|pid|AI|--dir PATH> ...] Same as uncaffeinate
+ports find [QUERY...]                         Find AI/app/agent process PIDs
+ports --find [QUERY...]                       Shortcut for ports find
 ports inspect <port>                          Full process detail + HTTP probe
 ports self-destroy                            Uninstall the binary
 ports version                                 Print version
@@ -174,6 +197,10 @@ ports version                                 Print version
 | `--pid N`        | Only this PID                                              |
 | `--cmd SUBSTR`   | Filter by command name (case-insensitive)                  |
 | `--dir PATH`     | Only processes whose cwd is at or under `PATH` (accepts `~`, relative, or absolute paths) |
+| `--strict-dir`   | For control commands with `--dir`, skip PIDs that also own listeners outside `PATH` |
+| `--find QUERY`   | For `caffeinate` / `uncaffeinate`, target matching AI processes |
+| `--follow` / `--watch` | For `caffeinate`, keep rescanning and caffeinate newly matching PIDs |
+| `--interval DUR` | Rescan interval for `--follow`, such as `1s`, `5s`, or `30s` |
 | `--since DUR`    | Started within DUR (e.g. `30m`, `2h`, `today`)             |
 | `--today`        | Shortcut for processes started since 00:00                 |
 | `--tcp`          | TCP only                                                   |
@@ -181,6 +208,10 @@ ports version                                 Print version
 | `--sort KEY[:DIR]` | Sort by `path` (default), `port`, `pid`, `age`, `command`, or `kind`. Optional `:asc` (default) or `:desc`. The default groups same-project ports together. |
 | `--reverse` / `-r` | Flip the current sort direction                          |
 | `--json`         | Machine-readable output                                    |
+
+For `ports find`, pass one or more queries such as `codex`, `"claude code"`,
+`gemini`, or `cursor`. With no query it searches all four. Add `--verbose` for
+full session details or `--json` for automation.
 
 ### Keeping dev servers and AI agents awake
 
@@ -193,7 +224,9 @@ the target process exits.
 ports caffeinate 3000                 # keep whatever owns :3000 awake
 ports --caffeinate 12345              # same shortcut, targeting a pid
 ports caffeinate --dir ~/code/agent   # keep every listener in a project awake
+ports caffeinate                      # keep all current listening PIDs awake
 ports uncaffeinate 3000               # stop the awake watcher, keep app running
+ports decaffeinate                    # stop every caffeinate watcher found
 ```
 
 This is useful for long-running local AI agents and coding sessions: Claude
@@ -211,6 +244,56 @@ PORT  PROTO  PID    COMMAND  PARENT  PATH          CAFFEINATE  HOST       AGE
 
 The `on:<pid>` value is the background `caffeinate` watcher PID. JSON output
 also includes `caffeinated` and `caffeinate_pids`.
+
+For AI apps and agents that do not listen on a local port, use process discovery:
+
+```sh
+ports --find codex "claude code" gemini cursor
+ports find codex --verbose
+ports caffeinate codex
+ports caffeinate codex --dir ~/code/agent --follow
+ports caffeinate --find "claude code" cursor
+ports caffeinate --pid 93633
+ports uncaffeinate --pid 93633
+ports uncaffeinate codex
+ports decaffeinate codex --follow
+```
+
+`--pid` forces PID targeting for control commands. That avoids the normal
+`port first, then PID` numeric lookup when you know you want an exact process.
+AI names are only accepted by `caffeinate` and `uncaffeinate`; destructive
+commands stay explicit, so use `ports find ...` and then `--pid` when you
+really mean to signal an AI process.
+
+`--follow` fixes the "new child process appeared later" case. It starts a
+background `ports __follow-caffeinate ...` watcher that repeatedly resolves
+the same selector and attaches `/usr/bin/caffeinate -w <pid>` to new matches.
+For example, `ports caffeinate codex --dir ~/code/agent --strict-dir --follow`
+keeps current and future Codex workspace/session PIDs under that project awake,
+while skipping shared listener PIDs that also expose ports outside the project.
+Stop both the current PID watchers and the follow watcher with
+`ports decaffeinate codex --dir ~/code/agent --strict-dir --follow`.
+
+With no target, `ports caffeinate` is a bulk operation: after confirmation it
+caffeinates every currently listening PID visible to `ports`. With no target,
+`ports decaffeinate` stops all active `/usr/bin/caffeinate -w <pid>` watchers it
+can discover, including watchers started manually or by another tool, and also
+stops any `ports --follow` watchers.
+
+`ports find` understands common AI process identities:
+
+- Codex desktop app roots, app-server processes, `node_repl` workspace
+  sessions, Codex CLI wrappers/native agents, and Computer Use MCP helpers.
+- Claude / Claude Code desktop and helper processes.
+- Gemini CLI or app processes when present.
+- Cursor app, helper, and agent processes.
+- Workspace child processes launched below an AI root, including local dev
+  servers with listening ports and active caffeinate watchers.
+
+Use `--verbose` when deciding what to keep awake. It includes the full command,
+executable path, cwd, workspace, parent chain, root process, listening ports,
+and the exact `ports caffeinate --pid <PID>` / `ports uncaffeinate --pid <PID>`
+commands for every match.
 
 Important macOS reality: this prevents idle sleep while macOS permits the
 assertion. A closed laptop lid can still force sleep unless the Mac is on
@@ -232,8 +315,27 @@ ports force-kill --dir ~/code/web-app -y # SIGKILL, no confirmation
 ports pause --dir ~/code/api             # freeze the API stack
 ports resume --dir ~/code/api            # unfreeze it
 ports caffeinate --dir ~/code/agent -y    # keep project listeners awake
+ports caffeinate --dir ~/code/agent --strict-dir -y
+                                      # skip shared PIDs that cross projects
 ports uncaffeinate --dir ~/code/agent -y  # release their awake watchers
+ports caffeinate codex --dir ~/code/agent --follow
+                                      # keep new AI children under this project awake
 ```
+
+Some runtimes expose ports for multiple projects from one shared host PID. The
+common macOS case is Docker via Colima/Lima, where one SSH multiplexer can own
+port forwards for several Compose projects. Because macOS `caffeinate -w`
+watches a PID, `ports caffeinate --dir ...` warns when a selected PID also owns
+listeners outside that directory. Use `--strict-dir` when you prefer skipping
+those shared PIDs over affecting another project. `--strict-dir` does not make
+macOS caffeinate only selected ports inside a shared PID; that is not possible
+with PID-scoped `caffeinate`.
+
+When `--dir` is combined with an AI selector such as `codex`, `claude code`,
+`gemini`, or `cursor`, AI matches are filtered to processes whose workspace,
+cwd, or listening port cwd is under that directory. That keeps
+`ports caffeinate codex --dir ~/code/benzersor --follow` from also selecting a
+separate Codex session under `~/code/devredin`.
 
 ### Examples
 
@@ -284,8 +386,18 @@ ports resume 3000
 # Keep a local AI agent, dev server, or tunnel running through idle sleep
 ports caffeinate 3000
 ports --caffeinate 12345
+ports caffeinate --pid 12345
+ports caffeinate codex
+ports caffeinate "claude code" gemini cursor
+ports caffeinate codex --dir ~/code/agent-workspace --strict-dir --follow
 ports caffeinate --dir ~/code/agent-workspace --yes
 ports uncaffeinate 3000
+ports uncaffeinate codex
+ports decaffeinate
+
+# Find AI app/agent/session PIDs that may not listen on ports
+ports --find codex "claude code" gemini cursor
+ports find codex --verbose
 
 # Full detail + HTTP probe on whatever's there
 ports inspect 3000

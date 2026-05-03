@@ -1,7 +1,7 @@
 {
   "name": "@erdemyilmaz/ports-cli",
-  "version": "0.5.0",
-  "description": "Project-aware lsof for macOS — list ports, kill by port, and keep dev servers or AI agents awake with caffeinate.",
+  "version": "0.6.0",
+  "description": "Project-aware lsof for macOS — list ports, inspect AI agent sessions, kill by port, and caffeinate exact ports, PIDs, directories, AI tools, or future matches with --follow.",
   "bin": {
     "ports": "./bin/ports.js"
   },
@@ -32,12 +32,19 @@
     "process-manager",
     "port-manager",
     "caffeinate",
+    "decaffeinate",
+    "follow",
+    "watch",
     "keep-awake",
     "prevent-sleep",
     "background-agents",
     "ai-agents",
+    "ai-session",
+    "agent-sessions",
     "claude-code",
-    "codex"
+    "codex",
+    "gemini-cli",
+    "cursor-ai"
   ],
   "author": "Erdem Yılmaz",
   "license": "MIT",
