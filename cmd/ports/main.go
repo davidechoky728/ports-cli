@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,7 +18,7 @@ import (
 	"time"
 )
 
-const version = "0.4.0"
+const version = "0.4.1"
 
 type Listener struct {
 	Command   string    `json:"command"`     // raw process name from lsof (e.g. "ssh")
@@ -405,12 +406,12 @@ func renderTable(ls []Listener, showKind bool) {
 		}
 		if showKind {
 			fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				l.Port, l.Protocol, l.PID, truncate(display, 22),
+				l.Port, l.Protocol, l.PID, truncate(display, 30),
 				truncate(parent, 14), truncateLeft(path, 42),
 				l.Kind, l.Host, l.Age)
 		} else {
 			fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
-				l.Port, l.Protocol, l.PID, truncate(display, 22),
+				l.Port, l.Protocol, l.PID, truncate(display, 30),
 				truncate(parent, 14), truncateLeft(path, 42),
 				l.Host, l.Age)
 		}
@@ -454,7 +455,110 @@ func fetchListeners() ([]Listener, error) {
 		return nil, err
 	}
 	all := append(tcp, udp...)
-	return dedupe(all), nil
+	deduped := dedupe(all)
+	enrichDocker(deduped)
+	return deduped, nil
+}
+
+type dockerContainerInfo struct {
+	name  string
+	cwd   string
+	image string
+}
+
+var (
+	dockerOnce sync.Once
+	dockerMap  map[int]dockerContainerInfo
+)
+
+// loadDockerInfo runs `docker ps` once per invocation and builds a map from
+// host port to container metadata. Compose-managed containers expose their
+// source directory via the com.docker.compose.project.working_dir label —
+// that's the *real* project for a tunneled port. Falls back silently if
+// docker isn't installed, isn't running, or times out.
+func loadDockerInfo() {
+	dockerOnce.Do(func() {
+		dockerMap = map[int]dockerContainerInfo{}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "docker", "ps", "--format", "{{json .}}").Output()
+		if err != nil {
+			return
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			if line == "" {
+				continue
+			}
+			var c struct {
+				Names  string `json:"Names"`
+				Ports  string `json:"Ports"`
+				Labels string `json:"Labels"`
+				Image  string `json:"Image"`
+			}
+			if err := json.Unmarshal([]byte(line), &c); err != nil {
+				continue
+			}
+			workDir := ""
+			for _, lab := range strings.Split(c.Labels, ",") {
+				if strings.HasPrefix(lab, "com.docker.compose.project.working_dir=") {
+					workDir = strings.TrimPrefix(lab, "com.docker.compose.project.working_dir=")
+					break
+				}
+			}
+			info := dockerContainerInfo{
+				name:  strings.TrimPrefix(c.Names, "/"),
+				cwd:   workDir,
+				image: c.Image,
+			}
+			for _, m := range strings.Split(c.Ports, ", ") {
+				i := strings.Index(m, "->")
+				if i < 0 {
+					continue
+				}
+				left := m[:i]
+				j := strings.LastIndex(left, ":")
+				if j < 0 {
+					continue
+				}
+				port, err := strconv.Atoi(left[j+1:])
+				if err != nil {
+					continue
+				}
+				if _, exists := dockerMap[port]; !exists {
+					dockerMap[port] = info
+				}
+			}
+		}
+	})
+}
+
+func enrichDocker(listeners []Listener) {
+	needs := false
+	for _, l := range listeners {
+		if strings.HasPrefix(l.Display, "docker(") {
+			needs = true
+			break
+		}
+	}
+	if !needs {
+		return
+	}
+	loadDockerInfo()
+	for i := range listeners {
+		if !strings.HasPrefix(listeners[i].Display, "docker(") {
+			continue
+		}
+		info, ok := dockerMap[listeners[i].Port]
+		if !ok {
+			continue
+		}
+		if info.cwd != "" {
+			listeners[i].Cwd = info.cwd
+		}
+		if info.name != "" {
+			listeners[i].Display = "docker(" + info.name + ")"
+		}
+	}
 }
 
 func runLsof(args []string, proto string) ([]Listener, error) {
