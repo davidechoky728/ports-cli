@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-const version = "0.4.1"
+const version = "0.4.2"
 
 type Listener struct {
 	Command   string    `json:"command"`     // raw process name from lsof (e.g. "ssh")
