@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 type Listener struct {
 	Command   string    `json:"command"`
@@ -49,6 +49,8 @@ type filter struct {
 	udpOnly   bool
 	showAll   bool
 	appsOnly  bool
+	sortKey   string
+	sortDesc  bool
 }
 
 func main() {
@@ -85,14 +87,14 @@ func printHelp() {
 	fmt.Print(`ports — list and control processes bound to local ports
 
 USAGE
-  ports [list] [flags]              Show listening ports (default)
-  ports kill <port|pid> [...]       Send SIGTERM (graceful)
-  ports force-kill <port|pid> [...] Send SIGKILL (immediate)
-  ports pause <port|pid> [...]      Freeze process (SIGSTOP)
-  ports resume <port|pid> [...]     Unfreeze process (SIGCONT)
-  ports inspect <port>              HTTP probe + process detail
-  ports self-destroy                Uninstall ports from this machine
-  ports version                     Print version
+  ports [list] [flags]                          Show listening ports (default)
+  ports kill <port|pid|--dir PATH> [...]        Send SIGTERM (graceful)
+  ports force-kill <port|pid|--dir PATH> [...]  Send SIGKILL (immediate)
+  ports pause <port|pid|--dir PATH> [...]       Freeze process (SIGSTOP)
+  ports resume <port|pid|--dir PATH> [...]      Unfreeze process (SIGCONT)
+  ports inspect <port>                          HTTP probe + process detail
+  ports self-destroy                            Uninstall ports from this machine
+  ports version                                 Print version
 
 FLAGS (list)
   --all                Include GUI apps and system services (hidden by default)
@@ -106,14 +108,27 @@ FLAGS (list)
   --today              Shortcut for processes started since 00:00
   --tcp                TCP only
   --udp                UDP only
+  --sort KEY[:DIR]     Sort by KEY (path, port, pid, age, command, kind);
+                       optional :asc (default) or :desc. Default: path
+                       (groups same-project ports together).
+  --reverse / -r       Flip the current sort direction
   --json               Machine-readable output
+
+FLAGS (kill / force-kill / pause / resume)
+  --dir PATH           Target every listener whose cwd is at or under PATH
+  --yes / -y           Skip the safety confirmation prompt
 
 By default only "dev" listeners are shown (anything not launched from a .app
 bundle or /System/Library path). Use --all to see Spotify, Chrome, system
 daemons, etc.
 
+When more than one process would be signaled (or when --dir is used), you
+are asked for confirmation. Pass --yes to skip the prompt.
+
 EXAMPLES
-  ports
+  ports                                # default sort: by working directory
+  ports --sort age:desc                # oldest-running first (zombie hunt)
+  ports --sort port                    # original numeric port ordering
   ports --all
   ports --range 3000:9000 --tcp
   ports --cmd node --since 1h
@@ -121,6 +136,8 @@ EXAMPLES
   ports --dir .                        # only stuff in the current directory
   ports kill 3000
   ports kill 12345 4000
+  ports kill --dir ~/code/web-app      # everything under that project
+  ports force-kill --dir ~/code -y     # skip the confirmation
 `)
 }
 
@@ -131,12 +148,7 @@ func listCmd(args []string) {
 		exitErr(err)
 	}
 	listeners = applyFilters(listeners, f)
-	sort.Slice(listeners, func(i, j int) bool {
-		if listeners[i].Port != listeners[j].Port {
-			return listeners[i].Port < listeners[j].Port
-		}
-		return listeners[i].PID < listeners[j].PID
-	})
+	sortListeners(listeners, f.sortKey, f.sortDesc)
 	if f.asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -183,6 +195,13 @@ func parseListFlags(args []string) filter {
 			i++
 		case strings.HasPrefix(a, "--dir="):
 			f.dirPrefix = resolveDir(strings.TrimPrefix(a, "--dir="))
+		case a == "--sort" && i+1 < len(args):
+			f.sortKey, f.sortDesc = parseSort(args[i+1])
+			i++
+		case strings.HasPrefix(a, "--sort="):
+			f.sortKey, f.sortDesc = parseSort(strings.TrimPrefix(a, "--sort="))
+		case a == "--reverse", a == "-r":
+			f.sortDesc = !f.sortDesc
 		case a == "--since" && i+1 < len(args):
 			f.since = parseDur(args[i+1])
 			i++
@@ -211,6 +230,76 @@ func parseDur(s string) time.Duration {
 		return 0
 	}
 	return d
+}
+
+func parseSort(s string) (string, bool) {
+	parts := strings.SplitN(s, ":", 2)
+	key := strings.ToLower(strings.TrimSpace(parts[0]))
+	desc := false
+	if len(parts) == 2 {
+		d := strings.ToLower(strings.TrimSpace(parts[1]))
+		desc = d == "desc" || d == "d" || d == "down"
+	}
+	return key, desc
+}
+
+func sortListeners(ls []Listener, key string, desc bool) {
+	if key == "" {
+		key = "path"
+	}
+	sort.SliceStable(ls, func(i, j int) bool {
+		a, b := i, j
+		if desc {
+			a, b = j, i
+		}
+		return primaryLess(ls, a, b, key)
+	})
+}
+
+func primaryLess(ls []Listener, i, j int, key string) bool {
+	switch key {
+	case "path", "cwd", "dir":
+		ai, aj := ls[i].Cwd, ls[j].Cwd
+		if ai == "" && aj != "" {
+			return false
+		}
+		if ai != "" && aj == "" {
+			return true
+		}
+		if ai != aj {
+			return ai < aj
+		}
+		return ls[i].Port < ls[j].Port
+	case "port":
+		if ls[i].Port != ls[j].Port {
+			return ls[i].Port < ls[j].Port
+		}
+		return ls[i].PID < ls[j].PID
+	case "pid":
+		if ls[i].PID != ls[j].PID {
+			return ls[i].PID < ls[j].PID
+		}
+		return ls[i].Port < ls[j].Port
+	case "age", "started", "time":
+		// "age asc" = smallest age first = most recently started.
+		if !ls[i].StartedAt.Equal(ls[j].StartedAt) {
+			return ls[i].StartedAt.After(ls[j].StartedAt)
+		}
+		return ls[i].Port < ls[j].Port
+	case "command", "cmd":
+		ci, cj := strings.ToLower(ls[i].Command), strings.ToLower(ls[j].Command)
+		if ci != cj {
+			return ci < cj
+		}
+		return ls[i].Port < ls[j].Port
+	case "kind":
+		if ls[i].Kind != ls[j].Kind {
+			return ls[i].Kind < ls[j].Kind
+		}
+		return ls[i].Port < ls[j].Port
+	default:
+		return ls[i].Port < ls[j].Port
+	}
 }
 
 func sinceMidnight() time.Duration {
@@ -645,17 +734,68 @@ func humanAge(t time.Time) string {
 }
 
 func signalCmd(args []string, sig syscall.Signal, label string) {
-	if len(args) == 0 {
-		exitErr(fmt.Errorf("%s requires at least one port or pid", label))
+	var (
+		positional []string
+		dirPrefix  string
+		yes        bool
+	)
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--dir" && i+1 < len(args):
+			dirPrefix = resolveDir(args[i+1])
+			i++
+		case strings.HasPrefix(a, "--dir="):
+			dirPrefix = resolveDir(strings.TrimPrefix(a, "--dir="))
+		case a == "--yes", a == "-y":
+			yes = true
+		default:
+			positional = append(positional, a)
+		}
+	}
+	if dirPrefix == "" && len(positional) == 0 {
+		exitErr(fmt.Errorf("%s requires at least one port, pid, or --dir PATH", label))
 	}
 	listeners, err := fetchListeners()
 	if err != nil {
 		exitErr(err)
 	}
-	pids := resolveTargets(args, listeners)
+
+	pids := map[int]string{}
+	if dirPrefix != "" {
+		for _, l := range listeners {
+			if pathHasPrefix(l.Cwd, dirPrefix) {
+				pids[l.PID] = fmt.Sprintf("%s on :%d (%s)", l.Command, l.Port, prettyPath(l.Cwd))
+			}
+		}
+	}
+	if len(positional) > 0 {
+		for k, v := range resolveTargets(positional, listeners) {
+			pids[k] = v
+		}
+	}
 	if len(pids) == 0 {
+		if dirPrefix != "" {
+			exitErr(fmt.Errorf("no listening processes found under %s", dirPrefix))
+		}
 		exitErr(fmt.Errorf("no matching processes"))
 	}
+
+	needsConfirm := !yes && (dirPrefix != "" || len(pids) > 1)
+	if needsConfirm {
+		fmt.Printf("About to %s %d process(es):\n", label, len(pids))
+		for pid, why := range pids {
+			fmt.Printf("  pid %d — %s\n", pid, why)
+		}
+		fmt.Print("Continue? [y/N] ")
+		r := bufio.NewReader(os.Stdin)
+		ans, _ := r.ReadString('\n')
+		if strings.TrimSpace(strings.ToLower(ans)) != "y" {
+			fmt.Println("Aborted.")
+			return
+		}
+	}
+
 	for pid, why := range pids {
 		err := syscall.Kill(pid, sig)
 		if err != nil {

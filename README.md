@@ -100,7 +100,24 @@ ports version                     Print version
 | `--today`        | Shortcut for processes started since 00:00                 |
 | `--tcp`          | TCP only                                                   |
 | `--udp`          | UDP only                                                   |
+| `--sort KEY[:DIR]` | Sort by `path` (default), `port`, `pid`, `age`, `command`, or `kind`. Optional `:asc` (default) or `:desc`. The default groups same-project ports together. |
+| `--reverse` / `-r` | Flip the current sort direction                          |
 | `--json`         | Machine-readable output                                    |
+
+### Killing by directory
+
+`kill`, `force-kill`, `pause`, and `resume` all accept `--dir PATH` to target
+every listener whose working directory is at or under the given path. Useful
+for "shut down everything in this project" without listing pids by hand. When
+more than one process would be signaled (or when `--dir` is used at all),
+you'll be asked to confirm — pass `--yes` / `-y` to skip.
+
+```sh
+ports kill --dir ~/code/web-app          # SIGTERM everything in this project
+ports force-kill --dir ~/code/web-app -y # SIGKILL, no confirmation
+ports pause --dir ~/code/api             # freeze the API stack
+ports resume --dir ~/code/api            # unfreeze it
+```
 
 ### Examples
 
@@ -125,6 +142,12 @@ ports --dir ~/Documents
 ports --dir ~/code/web-app
 ports --dir .                          # current directory
 
+# Sort by something other than path (the new default)
+ports --sort port                      # back to numeric port order
+ports --sort age:desc                  # oldest-running first — zombie hunt
+ports --sort command                   # group by command name
+ports --sort path -r                   # path order, descending
+
 # Free up port 3000 (graceful)
 ports kill 3000
 
@@ -133,6 +156,10 @@ ports force-kill 3000
 
 # Multiple at once (mix port numbers and pids)
 ports kill 3000 4000 12345
+
+# Kill everything running under a project tree
+ports kill --dir ~/code/web-app          # asks for confirmation
+ports force-kill --dir ~/code/web-app -y # immediate, no confirmation
 
 # Freeze a process without killing it (e.g. to see if a request is hanging on it)
 ports pause 3000
